@@ -82,7 +82,7 @@ except Exception:
 ISO = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 def iso_now() -> str:
-    return dt.datetime.utcnow().strftime(ISO)
+    return dt.datetime.now(dt.timezone.utc).strftime(ISO)
 
 
 def parse_iso(ts: str) -> dt.datetime:
@@ -1632,15 +1632,16 @@ class Bench:
         baseline_tok = None
         if 1 in results_by_level:
             bl = results_by_level[1]
-            if bl.get("tokens") and bl["tokens"].get("total_tokens", 0) > 0 and bl["throughput_rps"]:
-                baseline_tok = bl["throughput_rps"]
+            bl_tok = _compute_tok_per_sec(bl)
+            if bl_tok > 0:
+                baseline_tok = bl_tok
 
         if baseline_tok and baseline_tok > 0:
             comparison["speedups"] = {}
             for level in levels:
                 lvl = results_by_level[level]
-                level_tok = lvl.get("throughput_rps", 0) or 0
-                comparison["speedups"][level] = level_tok / baseline_tok if baseline_tok > 0 else 0
+                level_tok = _compute_tok_per_sec(lvl)
+                comparison["speedups"][level] = level_tok / baseline_tok
 
         print("\n" + "="*60)
         print("  CONCURRENCY COMPARISON")
@@ -1652,23 +1653,38 @@ class Bench:
             rps = lvl.get("throughput_rps", 0) or 0
             lat = lvl.get("latency_ms", {})
             lat_avg = lat.get("avg", 0) if lat else 0
-            tok_s = lvl.get("tokens", {})
-            tok_per_sec = (tok_s.get("total_tokens", 0) / lvl.get("duration", 1)) if lvl.get("duration") else 0
-            if not tok_per_sec and tok_s and tok_s.get("output_tokens", {}).get("total"):
-                tok_per_sec_tmp = tok_s["output_tokens"]["total"]
-                # Estimate from duration
-                durs = lvl.get("latency_raw", [])
-                if durs:
-                    total_dur = sum(durs) / 1000 / len(durs)  # average * count / 1000
-                    tok_per_sec = tok_per_sec_tmp / (total_dur if total_dur > 0 else 1)
+            tok_per_sec = _compute_tok_per_sec(lvl)
             spd = comparison.get("speedups", {}).get(level, 0)
-            print(f"{level:>8} {rps:>10.2f} {lat_avg:>10.1f}ms {0:>10.1f} {spd:>10.2f}x")
+            print(f"{level:>8} {rps:>10.2f} {lat_avg:>10.1f}ms {tok_per_sec:>10.1f} {spd:>10.2f}x")
 
         report_final = {
             "concurrency_comparison": comparison,
             "results": results_by_level,
         }
         return report_final
+
+
+def _compute_tok_per_sec(lvl: Dict[str, Any]) -> float:
+    """Compute tokens/sec from a summarize_group result dict"""
+    tok = lvl.get("tokens")
+    if not tok:
+        return 0.0
+    out_tok = tok.get("output_tokens")
+    if not out_tok or not out_tok.get("total"):
+        return 0.0
+    # Use throughput_rps * avg_output_tokens for accurate tok/s
+    rps = lvl.get("throughput_rps", 0) or 0
+    avg_out = out_tok.get("avg", 0) or 0
+    if rps > 0 and avg_out > 0:
+        return rps * avg_out
+    # Fallback: sum all output tokens / wall estimate
+    total_out = out_tok["total"]
+    durs = lvl.get("latency_raw", [])
+    if durs and total_out:
+        total_dur_s = sum(durs) / 1000.0
+        return total_out / total_dur_s if total_dur_s > 0 else 0.0
+    return 0.0
+
 
 # ------------------------------ Utilities ---------------------------
 
