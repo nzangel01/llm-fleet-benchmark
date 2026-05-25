@@ -31,9 +31,11 @@ python3 "$SCRIPT_DIR/fleet_bench.py" \
   --endpoints \
     "http://192.168.1.5:11434" \
     "http://localhost:11434" \
+    "http://192.168.1.7:11434" \
   --endpoint-labels \
     kokkoro \
     silvia \
+    sheffy \
   --concurrency-levels $LEVELS \
   --requests 10 \
   --prompt "Explain quantum entanglement in one sentence." \
